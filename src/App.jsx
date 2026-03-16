@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const STORAGE_KEYS = { log: "daily6_log", startKey: "daily6_startKey" };
+const STORAGE_KEYS = {
+  log: "daily6_log",
+  startKey: "daily6_startKey",
+  onboardingComplete: "daily6_onboarding_complete",
+  habits: "daily6_habits",
+  commitmentStartDate: "daily6_commitment_start",
+};
+const COMMITMENT_DAYS = 90;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const GOLD = "#F5C518";
@@ -8,7 +15,8 @@ const GREEN = "#34C759";
 const ORANGE = "#FF9500";
 const RED = "#FF3B30";
 
-const HABITS = [
+// Default habits only used before onboarding; after onboarding we use stored habits
+const DEFAULT_HABITS = [
   "Eat 180g protein",
   "Walk 10,000 steps",
   "Lift weights",
@@ -104,6 +112,98 @@ function getBg(count) {
   return "#200A0A";
 }
 
+// ─── Onboarding state ─────────────────────────────────────────────────────────
+function loadOnboardingState() {
+  try {
+    const complete = localStorage.getItem(STORAGE_KEYS.onboardingComplete) === "true";
+    const rawHabits = localStorage.getItem(STORAGE_KEYS.habits);
+    const commitmentStart = localStorage.getItem(STORAGE_KEYS.commitmentStartDate);
+    const habits = rawHabits ? JSON.parse(rawHabits) : null;
+    return { complete, habits, commitmentStart: commitmentStart || null };
+  } catch (_) {}
+  return { complete: false, habits: null, commitmentStart: null };
+}
+
+function getDaysRemaining(commitmentStartDate) {
+  if (!commitmentStartDate) return 0;
+  const start = new Date(commitmentStartDate);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + COMMITMENT_DAYS);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const remaining = Math.ceil((end - today) / 86400000);
+  return Math.max(0, remaining);
+}
+
+// AI-style suggestions from goal (keyword-based, no API)
+function getSuggestedHabits(goal) {
+  const g = (goal || "").toLowerCase();
+  const presets = {
+    fitness: [
+      "Eat 180g protein",
+      "Walk 10,000 steps",
+      "Lift weights or strength train",
+      "Do 50 pushups",
+      "Drink 1 gallon water",
+      "Lights out by 10:30 PM",
+    ],
+    health: [
+      "Eat a vegetable with every meal",
+      "Walk 10,000 steps",
+      "Drink 8 glasses of water",
+      "No screens 1 hour before bed",
+      "10 min stretching or mobility",
+      "Log what I ate",
+    ],
+    productivity: [
+      "Deep work block (90 min)",
+      "Clear inbox to zero",
+      "Top 3 priorities written down",
+      "No social media before noon",
+      "Review tomorrow the night before",
+      "One thing done before phone",
+    ],
+    focus: [
+      "Morning routine without phone",
+      "Single-tasking blocks (no multitask)",
+      "One hardest task before lunch",
+      "No notifications during work",
+      "Evening wind-down routine",
+      "Sleep by 10:30 PM",
+    ],
+    mindfulness: [
+      "10 min meditation",
+      "Gratitude (3 things)",
+      "One act of kindness",
+      "No phone first 30 min",
+      "10 min outside",
+      "Journal 5 min",
+    ],
+    sleep: [
+      "Lights out by 10:30 PM",
+      "No caffeine after 2 PM",
+      "No screens 1 hour before bed",
+      "Same wake time",
+      "Dark, cool room",
+      "Wind-down routine",
+    ],
+  };
+  for (const [key, habits] of Object.entries(presets)) {
+    if (g.includes(key)) return [...habits];
+  }
+  // Fallback: generic habits that reference the goal
+  const short = g.slice(0, 30);
+  return [
+    short ? `Work toward: ${short}${short.length >= 30 ? "…" : ""}` : "Daily action 1",
+    "Morning routine completed",
+    "One priority task done",
+    "Move body 30+ minutes",
+    "Reflect or journal 5 min",
+    "Wind down by 10:30 PM",
+  ];
+}
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const G = {
   font: `'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif`,
@@ -148,6 +248,83 @@ body { background: #000; color: #fff; font-family: ${G.font}; -webkit-font-smoot
   transition: opacity 0.2s, transform 0.15s;
 }
 .demo-banner-btn:hover { opacity: 0.9; transform: scale(1.02); }
+
+/* ── Onboarding ── */
+.onboarding-shell {
+  max-width: 390px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background: #000;
+  padding: 40px 24px 32px;
+  display: flex;
+  flex-direction: column;
+}
+.onboard-title { font-family: ${G.serif}; font-size: 32px; color: #fff; margin-bottom: 12px; line-height: 1.2; }
+.onboard-title span { color: ${GOLD}; }
+.onboard-sub { font-size: 14px; color: #666; line-height: 1.6; margin-bottom: 24px; }
+.onboard-commit {
+  background: #0d1508;
+  border: 1px solid #1a2a0f;
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 28px;
+}
+.onboard-commit p { font-size: 13px; color: #888; line-height: 1.55; margin: 0; }
+.onboard-commit strong { color: ${GOLD}; font-weight: 600; }
+.onboard-choices { display: flex; flex-direction: column; gap: 12px; }
+.onboard-btn {
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 12px;
+  color: #fff;
+  font-family: ${G.font};
+  font-size: 15px;
+  font-weight: 500;
+  padding: 16px 20px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.onboard-btn:hover { border-color: ${GOLD}; background: #181508; }
+.onboard-btn.secondary { background: transparent; color: #888; }
+.onboard-btn.secondary:hover { color: ${GOLD}; }
+.onboard-back { background: none; border: none; color: #666; font-size: 13px; cursor: pointer; margin-bottom: 20px; padding: 0; }
+.onboard-back:hover { color: ${GOLD}; }
+.onboard-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; color: #444; margin-bottom: 8px; text-transform: uppercase; }
+.onboard-input {
+  width: 100%;
+  background: #0c0c0c;
+  border: 1px solid #1a1a1a;
+  border-radius: 10px;
+  color: #fff;
+  font-family: ${G.font};
+  font-size: 15px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+.onboard-input:focus { border-color: #333; }
+.onboard-input::placeholder { color: #444; }
+.onboard-cta {
+  background: ${GOLD};
+  color: #000;
+  border: none;
+  font-family: ${G.font};
+  font-size: 15px;
+  font-weight: 600;
+  padding: 14px 24px;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 0.2s;
+}
+.onboard-cta:hover { opacity: 0.9; }
+.onboard-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.onboard-suggestions { margin-top: 20px; }
+.onboard-suggestions .habit-preview { font-size: 14px; color: #aaa; padding: 10px 0; border-bottom: 1px solid #1a1a1a; }
+.onboard-lock { font-size: 12px; color: #555; margin-top: 24px; }
 
 /* ── Nav bar ── */
 .nav-bar {
@@ -380,6 +557,140 @@ body { background: #000; color: #fff; font-family: ${G.font}; -webkit-font-smoot
 .modal-cell.active-cell { box-shadow: 0 0 0 2px #fff; }
 `;
 
+// ─── Onboarding ──────────────────────────────────────────────────────────────
+function Onboarding({ onComplete }) {
+  const [step, setStep] = useState("intro"); // intro | custom | goal | confirm
+  const [customHabits, setCustomHabits] = useState(["", "", "", "", "", ""]);
+  const [goal, setGoal] = useState("");
+  const [suggestedHabits, setSuggestedHabits] = useState(null);
+  const [generating, setGenerating] = useState(false);
+
+  const handleIntroChoose = () => setStep("custom");
+  const handleIntroGoal = () => setStep("goal");
+
+  const updateCustomHabit = (i, value) => {
+    setCustomHabits((prev) => {
+      const next = [...prev];
+      next[i] = value;
+      return next;
+    });
+  };
+
+  const canSubmitCustom = customHabits.every((h) => h.trim().length > 0);
+  const handleSubmitCustom = () => {
+    const habits = customHabits.map((h) => h.trim()).filter(Boolean);
+    if (habits.length === 6) {
+      finishOnboarding(habits);
+    }
+  };
+
+  const handleGenerate = () => {
+    if (!goal.trim()) return;
+    setGenerating(true);
+    setTimeout(() => {
+      setSuggestedHabits(getSuggestedHabits(goal.trim()));
+      setGenerating(false);
+      setStep("confirm");
+    }, 600);
+  };
+
+  const handleConfirmSuggestions = () => {
+    if (suggestedHabits && suggestedHabits.length === 6) {
+      finishOnboarding(suggestedHabits);
+    }
+  };
+
+  function finishOnboarding(habits) {
+    const start = new Date().toISOString().split("T")[0];
+    localStorage.setItem(STORAGE_KEYS.onboardingComplete, "true");
+    localStorage.setItem(STORAGE_KEYS.habits, JSON.stringify(habits));
+    localStorage.setItem(STORAGE_KEYS.commitmentStartDate, start);
+    onComplete(habits, start);
+  }
+
+  return (
+    <div className="onboarding-shell">
+      <style>{css}</style>
+      {step === "intro" && (
+        <>
+          <h1 className="onboard-title">Daily <span>6</span></h1>
+          <p className="onboard-sub">Pick 6 habits. Track them every day. Build consistency.</p>
+          <div className="onboard-commit">
+            <p><strong>90-day commitment:</strong> Once you set your 6 habits, you won't be able to change them for 90 days. That's how you build the consistency you want—no switching, no second-guessing.</p>
+          </div>
+          <div className="onboard-choices">
+            <button type="button" className="onboard-btn" onClick={handleIntroChoose}>
+              I'll choose my 6 habits
+            </button>
+            <button type="button" className="onboard-btn secondary" onClick={handleIntroGoal}>
+              Suggest habits from my goal
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === "custom" && (
+        <>
+          <button type="button" className="onboard-back" onClick={() => setStep("intro")}>← Back</button>
+          <h1 className="onboard-title">Your 6 habits</h1>
+          <p className="onboard-sub">Enter one habit per line. You'll track these every day for 90 days.</p>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i}>
+              <div className="onboard-label">Habit {i + 1}</div>
+              <input
+                className="onboard-input"
+                type="text"
+                placeholder={`e.g. ${DEFAULT_HABITS[i]}`}
+                value={customHabits[i]}
+                onChange={(e) => updateCustomHabit(i, e.target.value)}
+              />
+            </div>
+          ))}
+          <p className="onboard-lock">These 6 habits will be locked for 90 days.</p>
+          <button type="button" className="onboard-cta" disabled={!canSubmitCustom} onClick={handleSubmitCustom}>
+            Start my 90 days
+          </button>
+        </>
+      )}
+
+      {step === "goal" && (
+        <>
+          <button type="button" className="onboard-back" onClick={() => setStep("intro")}>← Back</button>
+          <h1 className="onboard-title">What's your goal?</h1>
+          <p className="onboard-sub">We'll suggest 6 habits based on your answer (e.g. "get fit", "better sleep", "focus at work").</p>
+          <input
+            className="onboard-input"
+            type="text"
+            placeholder="e.g. Build strength and energy"
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+          />
+          <button type="button" className="onboard-cta" disabled={!goal.trim() || generating} onClick={handleGenerate}>
+            {generating ? "Generating…" : "Generate my 6 habits"}
+          </button>
+        </>
+      )}
+
+      {step === "confirm" && suggestedHabits && (
+        <>
+          <button type="button" className="onboard-back" onClick={() => { setStep("goal"); setSuggestedHabits(null); }}>← Back</button>
+          <h1 className="onboard-title">Your 6 habits</h1>
+          <p className="onboard-sub">Based on your goal. Locked for 90 days once you start.</p>
+          <div className="onboard-suggestions">
+            {suggestedHabits.map((h, i) => (
+              <div key={i} className="habit-preview">{i + 1}. {h}</div>
+            ))}
+          </div>
+          <p className="onboard-lock">You won't be able to change these for 90 days.</p>
+          <button type="button" className="onboard-cta" onClick={handleConfirmSuggestions}>
+            Start my 90 days
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Checkbox ────────────────────────────────────────────────────────────────
 function Checkbox({ checked, onToggle, label }) {
   return (
@@ -491,13 +802,14 @@ function DatePickerModal({ log, currentKey, startKey, onSelect, onClose }) {
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-function Dashboard({ log, currentKey, startKey, onToggle, onNote, onPrev, onNext, onPickDate, onLoadDemo, hasData }) {
+function Dashboard({ habits, log, currentKey, startKey, commitmentStartDate, onToggle, onNote, onPrev, onNext, onPickDate }) {
   const today = todayKey();
   const isPast = currentKey !== today;
   const dayLog = log[currentKey] || { checked: [false,false,false,false,false,false], note: "" };
   const checkedCount = dayLog.checked.filter(Boolean).length;
   const progress = checkedCount / 6;
   const dayNum = getDayNumber(startKey, currentKey);
+  const daysLockedLeft = getDaysRemaining(commitmentStartDate);
 
   return (
     <>
@@ -509,10 +821,12 @@ function Dashboard({ log, currentKey, startKey, onToggle, onNote, onPrev, onNext
 
         <DayNav currentKey={currentKey} onPrev={onPrev} onNext={onNext} onPickDate={onPickDate} />
 
-        {!hasData && onLoadDemo && (
-          <div className="demo-banner">
-            <span className="demo-banner-text">See it in action with sample data</span>
-            <button type="button" className="demo-banner-btn" onClick={onLoadDemo}>Try demo</button>
+        {daysLockedLeft > 0 && (
+          <div className="past-banner" style={{ background: "#0d1508", borderColor: "#1a2a0f" }}>
+            <span className="past-banner-icon">🔒</span>
+            <span className="past-banner-text">
+              Your 6 habits are locked for <strong>{daysLockedLeft} more days</strong> to build consistency.
+            </span>
           </div>
         )}
 
@@ -534,7 +848,7 @@ function Dashboard({ log, currentKey, startKey, onToggle, onNote, onPrev, onNext
         </div>
 
         <ul className="habits-list">
-          {HABITS.map((h, i) => (
+          {(habits || DEFAULT_HABITS).map((h, i) => (
             <Checkbox
               key={i}
               label={h}
@@ -647,41 +961,66 @@ function CalendarView({ log, currentKey, startKey, onSelectDay }) {
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
+function getInitialState() {
+  const onboarding = loadOnboardingState();
+  const saved = loadSavedState();
+  const hasExistingData = Object.keys(saved.log).length > 0;
+  // Migrate existing users: if they have log data but never did onboarding, treat as onboarded with defaults
+  const complete = onboarding.complete || hasExistingData;
+  const habits = onboarding.habits || (hasExistingData ? DEFAULT_HABITS : null);
+  const commitmentStart = onboarding.commitmentStart || (hasExistingData ? (saved.startKey || getEarliestKey(saved.log)) : null);
+  return {
+    onboardingComplete: complete,
+    habits,
+    commitmentStartDate: commitmentStart,
+    log: saved.log,
+    startKey: complete && commitmentStart ? commitmentStart : (saved.startKey || getDefaultStartKey()),
+  };
+}
+
 export default function App() {
-  const { log: initialLog, startKey: initialStartKey } = loadSavedState();
-  const [log, setLog] = useState(initialLog);
-  const [startKey, setStartKey] = useState(initialStartKey);
+  const [state, setState] = useState(getInitialState);
+  const { onboardingComplete, habits, commitmentStartDate, log, startKey } = state;
   const [tab, setTab] = useState("dashboard");
   const [currentKey, setCurrentKey] = useState(todayKey);
   const [showPicker, setShowPicker] = useState(false);
 
-  // Persist to localStorage whenever log or startKey changes
+  // Persist log and startKey to localStorage whenever they change (only after onboarding)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.log, JSON.stringify(log));
-    localStorage.setItem(STORAGE_KEYS.startKey, startKey);
-  }, [log, startKey]);
+    if (onboardingComplete) {
+      localStorage.setItem(STORAGE_KEYS.log, JSON.stringify(log));
+      localStorage.setItem(STORAGE_KEYS.startKey, startKey);
+    }
+  }, [onboardingComplete, log, startKey]);
 
-  const loadDemo = useCallback(() => {
-    const seeded = seedLog();
-    setLog(seeded);
-    setStartKey(getEarliestKey(seeded));
+  const handleOnboardingComplete = useCallback((newHabits, commitmentStart) => {
+    setState((prev) => ({
+      ...prev,
+      onboardingComplete: true,
+      habits: newHabits,
+      commitmentStartDate: commitmentStart,
+      startKey: commitmentStart,
+      log: {},
+    }));
     setCurrentKey(todayKey());
     setTab("dashboard");
   }, []);
 
   const toggleHabit = useCallback((key, i) => {
-    setLog(prev => {
-      const existing = prev[key] || { checked:[false,false,false,false,false,false], note:"" };
+    setState((prev) => {
+      const prevLog = prev.log;
+      const existing = prevLog[key] || { checked:[false,false,false,false,false,false], note:"" };
       const checked = [...existing.checked];
       checked[i] = !checked[i];
-      return { ...prev, [key]: { ...existing, checked } };
+      return { ...prev, log: { ...prevLog, [key]: { ...existing, checked } } };
     });
   }, []);
 
   const setNote = useCallback((key, note) => {
-    setLog(prev => {
-      const existing = prev[key] || { checked:[false,false,false,false,false,false], note:"" };
-      return { ...prev, [key]: { ...existing, note } };
+    setState((prev) => {
+      const prevLog = prev.log;
+      const existing = prevLog[key] || { checked:[false,false,false,false,false,false], note:"" };
+      return { ...prev, log: { ...prevLog, [key]: { ...existing, note } } };
     });
   }, []);
 
@@ -700,7 +1039,9 @@ export default function App() {
     setTab("dashboard");
   };
 
-  const hasData = Object.keys(log).length > 0;
+  if (!onboardingComplete) {
+    return <Onboarding onComplete={handleOnboardingComplete} />;
+  }
 
   return (
     <>
@@ -708,16 +1049,16 @@ export default function App() {
       <div className="shell">
         {tab === "dashboard" && (
           <Dashboard
+            habits={habits}
             log={log}
             currentKey={currentKey}
             startKey={startKey}
+            commitmentStartDate={commitmentStartDate}
             onToggle={toggleHabit}
             onNote={setNote}
             onPrev={goPrev}
             onNext={goNext}
             onPickDate={() => setShowPicker(true)}
-            onLoadDemo={loadDemo}
-            hasData={hasData}
           />
         )}
 
