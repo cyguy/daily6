@@ -1,0 +1,4 @@
+/* Base reset - app has its own body styles in App */
+#root {
+  min-height: 100vh;
+}
